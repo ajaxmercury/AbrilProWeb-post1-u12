@@ -1,0 +1,86 @@
+name: CI/CD Pipeline — Build, Test, Docker & Smoke Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # -------------------------------------------------------------------
+  # JOB 1: Compilación, Pruebas Automatizadas y Publicación de Reportes
+  # -------------------------------------------------------------------
+  build-and-test:
+    name: 1. Build & Test (Maven)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 21 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Compilar y ejecutar pruebas automatizadas
+        run: mvn clean verify --no-transfer-progress
+
+      - name: Subir reportes de Surefire como artefacto
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: surefire-reports
+          path: target/surefire-reports
+          retention-days: 7
+
+  # -------------------------------------------------------------------
+  # JOB 2: Construcción de Imagen Docker y Smoke Test Automatizado
+  # -------------------------------------------------------------------
+  docker-build:
+    name: 2. Docker Build & Smoke Test
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Construir imagen Docker Multi-Stage
+        run: |
+          docker build -t mi-spring-app:${{ github.sha }} .
+          docker tag mi-spring-app:${{ github.sha }} mi-spring-app:latest
+
+      - name: Desplegar contenedor temporal para Smoke Test
+        run: |
+          docker run -d -p 8080:8080 --name test-container mi-spring-app:${{ github.sha }}
+
+      - name: Ejecutar Smoke Test sobre /actuator/health (Polling hasta 15 intentos)
+        run: |
+          echo "Iniciando verificación de disponibilidad de /actuator/health..."
+          for i in $(seq 1 15); do
+            RESPONSE=$(curl -s http://localhost:8080/actuator/health || true)
+            echo "Intento $i/15: Respuesta HTTP -> $RESPONSE"
+            if echo "$RESPONSE" | grep -q '"status":"UP"'; then
+              echo "========================================================="
+              echo "SMOKE TEST EXITOSO: Contenedor responde UP en el intento $i"
+              echo "========================================================="
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "========================================================="
+          echo "ERROR: El contenedor no alcanzó el estado UP tras 15 intentos (30s)"
+          echo "Volcado de logs del contenedor para diagnóstico:"
+          echo "========================================================="
+          docker logs test-container
+          exit 1
+
+      - name: Detener y limpiar contenedor de prueba
+        if: always()
+        run: |
+          echo "Limpiando contenedor de smoke test..."
+          docker stop test-container || true
+          docker rm test-container || true
