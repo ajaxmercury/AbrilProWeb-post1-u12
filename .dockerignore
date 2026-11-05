@@ -1,0 +1,16 @@
+# =====================================================================
+# DOCKERIGNORE - ARCHIVOS EXCLUIDOS DEL CONTEXTO DE CONSTRUCCIÓN
+# =====================================================================
+
+target/
+.git/
+.github/
+.idea/
+*.iml
+.mvn/
+*.md
+capturas/
+logs/
+*.log
+.DS_Store
+Thumbs.db
